@@ -1,3 +1,4 @@
 ﻿"timestamp","title","summary_zh","tags","atoms_count","urls","confidence","raw_md_path","html_path"
 "2026-05-11 11:27:50","X平台連結分享","使用者分享了一則X（原Twitter）的連結，內容無法直接解析，歸類為其他。","外部連結","1","https://x.com/anshu217/status/2053521605033398704?s=20","high","_outputs/misc/raw/20260511_112750_lineingest_X平台連結分享.md","_outputs/misc/inbox/20260511_112750_X平台連結分享.html"
 "2026-05-11 11:31:44","無法解析的外部連結","該連結指向 X (Twitter) 平台，但無法直接解析其具體內容，需進一步人工確認是否屬於 AI 或 PLA 研究範疇。","外部連結; 待分類","1","https://x.com/GoJun315/status/2053402619872432503?s=20","low","_outputs/misc/raw/20260511_113144_lineingest_無法解析的外部連結.md","_outputs/misc/inbox/20260511_113144_無法解析的外部連結.html"
+"2026-05-11 11:34:03","無法識別的外部連結","該連結指向 X (Twitter) 平台，但無法從連結內容直接判斷其具體歸類為 AI 或 PLA 相關研究主題，故暫歸類為其他。","外部連結; 未分類","1","https://x.com/pirrer/status/2053779674178957484?s=20","low","_outputs/misc/raw/20260511_113403_lineingest_無法識別的外部連結.md","_outputs/misc/inbox/20260511_113403_無法識別的外部連結.html"
