@@ -1,10 +1,10 @@
 #!/bin/sh
 # Mounted at /opt/start-openab.sh in the openab service on Zeabur (Gemini variant).
-# v4 - adds gemini-acp-shim.py to bridge openab LSP framing <-> gemini NDJSON.
+# v5 - switch from LINE gateway to Discord (allow_dm = true for personal use).
 set -e
 
 missing=""
-for v in GEMINI_API_KEY GITHUB_TOKEN GITHUB_REPO_AI GITHUB_REPO_PLA; do
+for v in DISCORD_BOT_TOKEN GEMINI_API_KEY GITHUB_TOKEN GITHUB_REPO_AI GITHUB_REPO_PLA; do
   eval "val=\$$v"
   [ -z "$val" ] && missing="$missing $v"
 done
@@ -139,15 +139,15 @@ PYEOF
 chmod +x /opt/gemini-acp-shim.py
 
 cat > "$CONFIG_FILE" <<EOF
-[gateway]
-url = "ws://ghcrioopenabdevopenab-gateway030.zeabur.internal:8080/ws"
-platform = "line"
+[discord]
+bot_token = "$DISCORD_BOT_TOKEN"
+allow_dm = true
 
 [agent]
 command = "/opt/gemini-acp-shim.py"
-args = ["--acp", "--skip-trust", "--model", "gemini-3.1-flash-lite"]
+args = ["--acp", "--skip-trust", "--model", "gemini-2.0-flash-lite"]
 working_dir = "$REPO_AI_DIR"
-env = { GEMINI_API_KEY = "$GEMINI_API_KEY", REPO_DIR_AI = "$REPO_AI_DIR", REPO_DIR_PLA = "$REPO_PLA_DIR", GITHUB_TOKEN = "$GITHUB_TOKEN", GIT_USER_NAME = "$GIT_USER_NAME", GIT_USER_EMAIL = "$GIT_USER_EMAIL", GEMINI_MODEL = "gemini-3.1-flash-lite", HOME = "/home/node" }
+env = { GEMINI_API_KEY = "$GEMINI_API_KEY", REPO_DIR_AI = "$REPO_AI_DIR", REPO_DIR_PLA = "$REPO_PLA_DIR", GITHUB_TOKEN = "$GITHUB_TOKEN", GIT_USER_NAME = "$GIT_USER_NAME", GIT_USER_EMAIL = "$GIT_USER_EMAIL", GEMINI_MODEL = "gemini-2.0-flash-lite", HOME = "/home/node" }
 
 [pool]
 max_sessions = 10
@@ -158,6 +158,6 @@ tables = "code"
 EOF
 
 chown node:node "$CONFIG_FILE" 2>/dev/null || true
-echo "openab: ready (Gemini Flash Lite + ACP shim)"
+echo "openab: ready (Discord + Gemini Flash Lite + ACP shim)"
 
 exec su -p -s /bin/sh node -c "exec openab run --config '$CONFIG_FILE'"
