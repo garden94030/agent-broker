@@ -1,10 +1,10 @@
 #!/bin/sh
-# Mounted at /opt/start-openab.sh in the openab service on Zeabur (Gemini variant).
-# v5 - switch from LINE gateway to Discord (allow_dm = true for personal use).
+# Mounted at /opt/start-openab.sh in the openab service on Zeabur (Claude variant).
+# v6 - switch from Gemini agent to Claude (claude-agent-acp) + Discord.
 set -e
 
 missing=""
-for v in DISCORD_BOT_TOKEN GEMINI_API_KEY GITHUB_TOKEN GITHUB_REPO_AI GITHUB_REPO_PLA; do
+for v in DISCORD_BOT_TOKEN OPENAB_AUTH_TOKEN GEMINI_API_KEY GITHUB_TOKEN GITHUB_REPO_AI GITHUB_REPO_PLA; do
   eval "val=\$$v"
   [ -z "$val" ] && missing="$missing $v"
 done
@@ -12,6 +12,16 @@ if [ -n "$missing" ]; then
   echo "openab: missing required env vars:$missing"
   exec sleep infinity
 fi
+
+case "$OPENAB_AUTH_TOKEN" in
+  sk-ant-oat*) export CLAUDE_CODE_OAUTH_TOKEN="$OPENAB_AUTH_TOKEN" ;;
+  sk-ant-*)    export ANTHROPIC_API_KEY="$OPENAB_AUTH_TOKEN" ;;
+  *)
+    export ANTHROPIC_API_KEY="$OPENAB_AUTH_TOKEN"
+    export ANTHROPIC_BASE_URL="https://hnd1.aihub.zeabur.ai"
+    export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1
+    ;;
+esac
 
 if ! command -v python3 >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
   echo "openab: installing python3 + git"
@@ -33,9 +43,8 @@ REPO_AI_DIR="${REPO_DIR_AI:-/home/node/repo_ai}"
 REPO_PLA_DIR="${REPO_DIR_PLA:-/home/node/repo_pla}"
 CONFIG_DIR="/home/node/.config/openab"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
-GEMINI_CONFIG_DIR="/home/node/.gemini"
 
-mkdir -p "$CONFIG_DIR" "$GEMINI_CONFIG_DIR"
+mkdir -p "$CONFIG_DIR"
 
 GIT_USER_NAME="${GIT_USER_NAME:-openab-bot}"
 GIT_USER_EMAIL="${GIT_USER_EMAIL:-openab-bot@users.noreply.github.com}"
@@ -90,53 +99,19 @@ install_secret_hook "$REPO_PLA_DIR"
 mkdir -p "$REPO_AI_DIR/ai_wiki/raw" "$REPO_AI_DIR/_outputs/ai/inbox" "$REPO_AI_DIR/_outputs/misc/inbox" "$REPO_AI_DIR/_outputs/misc/raw"
 [ -d "$REPO_PLA_DIR/.git" ] && mkdir -p "$REPO_PLA_DIR/wiki/raw" "$REPO_PLA_DIR/_outputs/pla/inbox"
 
-chown -R node:node "$REPO_AI_DIR" "$GEMINI_CONFIG_DIR" 2>/dev/null || true
+chown -R node:node "$REPO_AI_DIR" 2>/dev/null || true
 [ -d "$REPO_PLA_DIR" ] && chown -R node:node "$REPO_PLA_DIR" 2>/dev/null || true
 
 [ -f "$REPO_AI_DIR/.zeabur/process_inbox.py" ] && cp "$REPO_AI_DIR/.zeabur/process_inbox.py" /opt/process_inbox.py
-[ -f "$REPO_AI_DIR/.zeabur/GEMINI.md" ] && cp "$REPO_AI_DIR/.zeabur/GEMINI.md" /opt/GEMINI.md
+[ -f "$REPO_AI_DIR/.zeabur/CLAUDE.md" ] && cp "$REPO_AI_DIR/.zeabur/CLAUDE.md" /opt/CLAUDE.md
 chmod +x /opt/process_inbox.py 2>/dev/null || true
 
-if [ -f /opt/GEMINI.md ]; then
-  cp /opt/GEMINI.md "$REPO_AI_DIR/GEMINI.md"
-  [ -d "$REPO_PLA_DIR" ] && cp /opt/GEMINI.md "$REPO_PLA_DIR/GEMINI.md"
+if [ -f /opt/CLAUDE.md ]; then
+  cp /opt/CLAUDE.md /home/node/CLAUDE.md
+  cp /opt/CLAUDE.md "$REPO_AI_DIR/CLAUDE.md"
+  [ -d "$REPO_PLA_DIR" ] && cp /opt/CLAUDE.md "$REPO_PLA_DIR/CLAUDE.md"
+  chown node:node /home/node/CLAUDE.md 2>/dev/null || true
 fi
-
-# Write the stdio passthrough shim for gemini --acp.
-# Both openab and gemini --acp speak NDJSON; we just need a passthrough that
-# uses os.read/os.write to avoid Python BufferedReader blocking on read(N).
-cat > /opt/gemini-acp-shim.py <<'PYEOF'
-#!/usr/bin/env python3
-import sys, os, threading, subprocess, time, traceback
-
-def pump(name, src_fd, dst_fd):
-    try:
-        while True:
-            chunk = os.read(src_fd, 65536)
-            if not chunk:
-                try: os.close(dst_fd)
-                except: pass
-                return
-            n = 0
-            while n < len(chunk):
-                w = os.write(dst_fd, chunk[n:])
-                if w == 0: break
-                n += w
-    except Exception:
-        pass
-
-def main():
-    args = ['gemini'] + sys.argv[1:]
-    p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
-    threading.Thread(target=pump, args=('IN', sys.stdin.fileno(), p.stdin.fileno()), daemon=True).start()
-    threading.Thread(target=pump, args=('OUT', p.stdout.fileno(), sys.stdout.fileno()), daemon=True).start()
-    threading.Thread(target=pump, args=('ERR', p.stderr.fileno(), sys.stderr.fileno()), daemon=True).start()
-    sys.exit(p.wait())
-
-if __name__ == '__main__':
-    main()
-PYEOF
-chmod +x /opt/gemini-acp-shim.py
 
 cat > "$CONFIG_FILE" <<EOF
 [discord]
@@ -144,10 +119,11 @@ bot_token = "$DISCORD_BOT_TOKEN"
 allow_dm = true
 
 [agent]
-command = "/opt/gemini-acp-shim.py"
-args = ["--acp", "--skip-trust", "--model", "gemini-2.0-flash-lite"]
-working_dir = "$REPO_AI_DIR"
-env = { GEMINI_API_KEY = "$GEMINI_API_KEY", REPO_DIR_AI = "$REPO_AI_DIR", REPO_DIR_PLA = "$REPO_PLA_DIR", GITHUB_TOKEN = "$GITHUB_TOKEN", GIT_USER_NAME = "$GIT_USER_NAME", GIT_USER_EMAIL = "$GIT_USER_EMAIL", GEMINI_MODEL = "gemini-2.0-flash-lite", HOME = "/home/node" }
+command = "claude-agent-acp"
+args = []
+working_dir = "/home/node"
+inherit_env = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"]
+env = { REPO_DIR_AI = "$REPO_AI_DIR", REPO_DIR_PLA = "$REPO_PLA_DIR", GITHUB_TOKEN = "$GITHUB_TOKEN", GIT_USER_NAME = "$GIT_USER_NAME", GIT_USER_EMAIL = "$GIT_USER_EMAIL", GEMINI_API_KEY = "$GEMINI_API_KEY", HOME = "/home/node" }
 
 [pool]
 max_sessions = 10
@@ -158,6 +134,6 @@ tables = "code"
 EOF
 
 chown node:node "$CONFIG_FILE" 2>/dev/null || true
-echo "openab: ready (Discord + Gemini Flash Lite + ACP shim)"
+echo "openab: ready (Discord + Claude + claude-agent-acp)"
 
 exec su -p -s /bin/sh node -c "exec openab run --config '$CONFIG_FILE'"
