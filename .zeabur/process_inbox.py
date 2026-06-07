@@ -54,7 +54,27 @@ try:
     from youtube_transcript_api import YouTubeTranscriptApi as _YTApi  # type: ignore
     _YT_API_AVAILABLE = True
 except ImportError:
-    _YT_API_AVAILABLE = False
+    try:
+        import subprocess as _sp
+        _sp.run(
+            [sys.executable, "-m", "pip", "install", "--quiet",
+             "--break-system-packages", "youtube-transcript-api"],
+            check=True, capture_output=True,
+        )
+    except Exception:
+        try:
+            import subprocess as _sp
+            _sp.run(
+                [sys.executable, "-m", "pip", "install", "--quiet", "youtube-transcript-api"],
+                check=True, capture_output=True,
+            )
+        except Exception:
+            pass
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi as _YTApi  # type: ignore
+        _YT_API_AVAILABLE = True
+    except ImportError:
+        _YT_API_AVAILABLE = False
 
 REPO_AI = Path(os.environ.get("REPO_DIR_AI", "/home/node/repo_ai"))
 REPO_PLA = Path(os.environ.get("REPO_DIR_PLA", "/home/node/repo_pla"))
