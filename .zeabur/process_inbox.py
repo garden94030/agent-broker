@@ -50,6 +50,12 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+try:
+    from youtube_transcript_api import YouTubeTranscriptApi as _YTApi  # type: ignore
+    _YT_API_AVAILABLE = True
+except ImportError:
+    _YT_API_AVAILABLE = False
+
 REPO_AI = Path(os.environ.get("REPO_DIR_AI", "/home/node/repo_ai"))
 REPO_PLA = Path(os.environ.get("REPO_DIR_PLA", "/home/node/repo_pla"))
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -57,6 +63,7 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
 GIT_NAME = os.environ.get("GIT_USER_NAME", "openab-bot")
 GIT_EMAIL = os.environ.get("GIT_USER_EMAIL", "openab-bot@users.noreply.github.com")
 DRY_RUN = os.environ.get("DRY_RUN", "") == "1"
+WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "")  # e.g. https://openab-whisper.<account>.workers.dev
 
 TS_NOW = dt.datetime.now()
 TS_FILE = TS_NOW.strftime("%Y%m%d_%H%M%S")
@@ -85,24 +92,55 @@ def slugify(text: str, max_len: int = 30) -> str:
 # URL fetching
 # ----------------------------------------------------------------------------
 
-def fetch_youtube(video_id: str) -> dict[str, str]:
-    url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+def fetch_transcript(video_id: str) -> str:
+    """Fetch YouTube captions via youtube-transcript-api (runs in-process)."""
+    if not _YT_API_AVAILABLE:
+        return ""
+    langs = ["zh-Hant", "zh-Hans", "zh-TW", "zh", "en"]
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        api = _YTApi()
+        transcript = api.fetch(video_id, languages=langs)
+        return " ".join(s.text for s in transcript)[:4000]
+    except Exception:
+        pass
+    try:
+        # Fallback: fetch without language preference
+        api = _YTApi()
+        transcript = api.fetch(video_id)
+        return " ".join(s.text for s in transcript)[:4000]
+    except Exception:
+        return ""
+
+
+def fetch_youtube(video_id: str) -> dict[str, str]:
+    oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+    title = ""
+    author = ""
+    try:
+        req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        return {
-            "url": f"https://www.youtube.com/watch?v={video_id}",
-            "title": data.get("title", ""),
-            "text": f"YouTube 影片：{data.get('title','')}（頻道：{data.get('author_name','')}）",
-            "kind": "youtube",
-            "error": "",
-        }
+        title = data.get("title", "")
+        author = data.get("author_name", "")
     except Exception as exc:
         return {
             "url": f"https://www.youtube.com/watch?v={video_id}",
             "title": "", "text": "", "kind": "youtube", "error": str(exc),
         }
+
+    transcript = fetch_transcript(video_id)
+    text = f"YouTube 影片：{title}（頻道：{author}）"
+    if transcript:
+        text += f"\n\n【字幕全文（{len(transcript)} 字）】\n{transcript[:3000]}"
+
+    return {
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "title": title,
+        "text": text,
+        "kind": "youtube",
+        "transcript": transcript,
+        "error": "",
+    }
 
 
 def fetch_html(url: str, timeout: int = 8) -> dict[str, str]:
@@ -449,10 +487,23 @@ def write_html(message: str, fetched: list[dict[str, str]],
     for f in fetched:
         if f.get("error"):
             fetched_html += f'<p>❌ <a href="{e(f["url"])}">{e(f["url"])}</a> — {e(f["error"])}</p>'
-        else:
-            kind_label = "🎬 YouTube 影片" if f.get("kind") == "youtube" else "🌐 網頁"
+        elif f.get("kind") == "youtube":
+            transcript = f.get("transcript", "")
+            transcript_block = ""
+            if transcript:
+                transcript_block = (
+                    f'<details style="margin-top:8px"><summary style="cursor:pointer;color:#555;font-size:13px">'
+                    f'📝 字幕全文（{len(transcript)} 字）</summary>'
+                    f'<pre style="white-space:pre-wrap;font-size:12px;max-height:300px;overflow:auto">'
+                    f'{e(transcript[:4000])}</pre></details>'
+                )
             fetched_html += (
-                f'<h3>{kind_label}：<a href="{e(f["url"])}">{e(f.get("title") or f["url"])}</a></h3>'
+                f'<h3>🎬 YouTube 影片：<a href="{e(f["url"])}">{e(f.get("title") or f["url"])}</a></h3>'
+                f'{transcript_block}'
+            )
+        else:
+            fetched_html += (
+                f'<h3>🌐 網頁：<a href="{e(f["url"])}">{e(f.get("title") or f["url"])}</a></h3>'
                 f'<p style="color:#666;font-size:14px">{e(f.get("text",""))[:600]}…</p>'
             )
 
