@@ -92,8 +92,9 @@ chown -R node:node "$REPO_AI_DIR" 2>/dev/null || true
 [ -d "$REPO_PLA_DIR" ] && chown -R node:node "$REPO_PLA_DIR" 2>/dev/null || true
 
 [ -f "$REPO_AI_DIR/.zeabur/process_inbox.py" ] && cp "$REPO_AI_DIR/.zeabur/process_inbox.py" /opt/process_inbox.py
+[ -f "$REPO_AI_DIR/.zeabur/search_kb.py" ] && cp "$REPO_AI_DIR/.zeabur/search_kb.py" /opt/search_kb.py
 [ -f "$REPO_AI_DIR/.zeabur/GEMINI.md" ] && cp "$REPO_AI_DIR/.zeabur/GEMINI.md" /opt/GEMINI.md
-chmod +x /opt/process_inbox.py 2>/dev/null || true
+chmod +x /opt/process_inbox.py /opt/search_kb.py 2>/dev/null || true
 
 if [ -f /opt/GEMINI.md ]; then
   cp /opt/GEMINI.md "$REPO_AI_DIR/GEMINI.md"

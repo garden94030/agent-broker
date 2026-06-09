@@ -45,6 +45,8 @@ import os
 import re
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -63,7 +65,11 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
 GIT_NAME = os.environ.get("GIT_USER_NAME", "openab-bot")
 GIT_EMAIL = os.environ.get("GIT_USER_EMAIL", "openab-bot@users.noreply.github.com")
 DRY_RUN = os.environ.get("DRY_RUN", "") == "1"
-WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "")  # e.g. https://openab-whisper.<account>.workers.dev
+WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "")
+
+_GEMINI_MAX_RETRIES = 3
+_GEMINI_RETRY_DELAYS = [5, 15, 30]
+_SEEN_URLS_FILE = REPO_AI / "_system" / "seen_urls.json"
 
 TS_NOW = dt.datetime.now()
 TS_FILE = TS_NOW.strftime("%Y%m%d_%H%M%S")
@@ -226,14 +232,45 @@ Reply with ONE JSON object only. No markdown fences, no commentary.
 """
 
 
+def _load_seen_urls() -> set[str]:
+    try:
+        return set(json.loads(_SEEN_URLS_FILE.read_text("utf-8")))
+    except Exception:
+        return set()
+
+
+def _save_seen_url(url: str) -> None:
+    seen = _load_seen_urls()
+    seen.add(url)
+    _SEEN_URLS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _SEEN_URLS_FILE.write_text(
+        json.dumps(sorted(seen), ensure_ascii=False, indent=2), "utf-8"
+    )
+
+
+def fetch_url_cached(url: str) -> dict[str, str]:
+    """Fetch URL content; skip network call if already fetched before."""
+    seen = _load_seen_urls()
+    if url in seen:
+        return {"url": url, "title": "", "text": "", "kind": "web",
+                "error": "", "_cached": True}
+    result = fetch_url(url)
+    if not result.get("error"):
+        _save_seen_url(url)
+    return result
+
+
 def call_gemini(message: str, fetched: list[dict[str, str]]) -> dict[str, Any]:
     if not GEMINI_KEY:
-        return {"error": "GEMINI_API_KEY not set"}
+        return {"error": "GEMINI_API_KEY 未設定 — 請在 Zeabur 環境變數中更新此值"}
 
     fetched_block = ""
     for f in fetched:
         if f.get("text"):
-            fetched_block += f"\n--- Fetched ({f.get('kind','web')}): {f['url']}\nTitle: {f.get('title','')}\n{f.get('text','')}\n"
+            fetched_block += (
+                f"\n--- Fetched ({f.get('kind','web')}): {f['url']}\n"
+                f"Title: {f.get('title','')}\n{f.get('text','')}\n"
+            )
 
     prompt = GEMINI_PROMPT_TEMPLATE.format(
         ts=TS_HUMAN, message=message, fetched_block=fetched_block,
@@ -247,23 +284,50 @@ def call_gemini(message: str, fetched: list[dict[str, str]]) -> dict[str, Any]:
         },
     }).encode("utf-8")
 
-    url = (
+    endpoint = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_KEY}"
     )
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read().decode("utf-8")
-    except Exception as exc:
-        return {"error": f"Gemini call failed: {exc}"}
 
-    try:
-        api_resp = json.loads(raw)
-        text = api_resp["candidates"][0]["content"]["parts"][0]["text"]
-        return json.loads(text)
-    except Exception as exc:
-        return {"error": f"Gemini parse failed: {exc}", "raw": raw[:400]}
+    last_error = ""
+    for attempt in range(_GEMINI_MAX_RETRIES):
+        req = urllib.request.Request(
+            endpoint, data=body, headers={"Content-Type": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=35) as resp:
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            err_body = ""
+            try:
+                err_body = exc.read().decode("utf-8", errors="replace")[:300]
+            except Exception:
+                pass
+            if exc.code in (400, 401, 403):
+                hint = "請至 Zeabur 更新 GEMINI_API_KEY 環境變數"
+                if "API_KEY_INVALID" in err_body or "API key not valid" in err_body:
+                    hint = "API Key 無效，請更換新 Key"
+                elif exc.code == 429 or "quota" in err_body.lower():
+                    hint = "配額已用盡，請等待重置或更換 Key"
+                return {"error": f"Gemini API 錯誤 (HTTP {exc.code}): {hint}"}
+            last_error = f"HTTP {exc.code}: {exc.reason}"
+        except Exception as exc:
+            last_error = str(exc)
+
+        else:
+            try:
+                api_resp = json.loads(raw)
+                text = api_resp["candidates"][0]["content"]["parts"][0]["text"]
+                return json.loads(text)
+            except Exception as exc:
+                return {"error": f"Gemini 回應解析失敗: {exc}", "raw": raw[:400]}
+
+        if attempt < _GEMINI_MAX_RETRIES - 1:
+            delay = _GEMINI_RETRY_DELAYS[attempt]
+            print(f"⏳ Gemini 暫時失敗，{delay}s 後重試（第 {attempt+1}/{_GEMINI_MAX_RETRIES} 次）...", flush=True)
+            time.sleep(delay)
+
+    return {"error": f"Gemini 呼叫失敗（已重試 {_GEMINI_MAX_RETRIES} 次）: {last_error}"}
 
 
 # ----------------------------------------------------------------------------
@@ -665,7 +729,7 @@ def main() -> int:
         return 0
 
     urls = URL_RE.findall(message)
-    fetched = [fetch_url(u) for u in urls[:3]]
+    fetched = [fetch_url_cached(u) for u in urls[:3]]
 
     extracted = call_gemini(message, fetched)
     if extracted.get("error"):

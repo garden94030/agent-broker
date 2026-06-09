@@ -64,13 +64,27 @@ HTML：_outputs/ai/inbox/20260507_142030_ai_zhi.html
 ## 例外處理
 
 - 腳本印出 `失敗 / failed`：仍把 stdout 原封回給用戶。原文已存到 `_outputs/misc/raw/`，不會丟。
-- 用戶問「上週存的 X 呢？」這類查詢類訊息：可以用 `Bash` 執行 `grep -r "X" $REPO_DIR_AI $REPO_DIR_PLA`，**不要**呼叫 `process_inbox.py`、**不要** git push。
+- 腳本印出 `Gemini API 錯誤` / `API Key 無效`：告知用戶需要在 Zeabur 更新 `GEMINI_API_KEY`，**不要**重試。
 
 ## 怎麼判斷是「歸檔」還是「查詢」
 
-預設一律當「歸檔」。**只有**訊息明顯是疑問句並指涉既有內容（「我之前存的」「上週的」「歸檔有沒有」）才當查詢。**寧可多歸檔也不要漏歸檔**——多餘訊息會被 reviewer 標記，但漏掉的東西沒第二次機會。
+預設一律當「歸檔」。**只有**訊息明顯是疑問句並指涉既有內容（「我之前存的」「上週的」「歸檔有沒有」「找一下」）才當查詢。**寧可多歸檔也不要漏歸檔**——多餘訊息會被 reviewer 標記，但漏掉的東西沒第二次機會。
+
+## 查詢知識庫（search_kb.py）
+
+用戶問「找一下 X」「上週存的 X 在哪」時，**優先使用 `search_kb.py`**：
+
+```sh
+python3 /opt/search_kb.py "關鍵字"
+python3 /opt/search_kb.py "火箭軍" --cat pla
+python3 /opt/search_kb.py "agent" --from 2026-05
+python3 /opt/search_kb.py --recent 10
+python3 /opt/search_kb.py --stats
+```
+
+把 stdout 原封不動回給用戶。找不到再用 `grep -r` 補查。
 
 ## 你的工具
 
-- `Bash`：呼叫 `process_inbox.py` / `grep` / `find` / `cat`
+- `Bash`：呼叫 `process_inbox.py` / `search_kb.py` / `grep` / `find` / `cat`
 - 不需要 `Edit` / `Write`：所有檔案寫入由 `process_inbox.py` 完成
